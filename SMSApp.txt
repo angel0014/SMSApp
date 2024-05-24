@@ -1,0 +1,519 @@
+import tkinter as tk
+from tkinter import ttk
+import pandas as pd
+from datetime import datetime
+import os
+import re
+import time
+
+class SMSApp(tk.Tk):
+    
+    def __init__(self):
+        super().__init__()
+        self.title('Automatización Envío de SMS')
+        self.geometry("600x300")
+        
+        # Configurar el estilo de la aplicación
+        self.style = ttk.Style(self)
+        self.style.theme_use('clam')
+        # Configurar el estilo del botón
+        self.style.configure('TButton', font=('Helvetica', 9, "bold"), borderwidth='4', width=14)
+        self.style.map('TButton',
+                       foreground=[('pressed', 'White'), ('active', 'DarkCyan')],
+                       background=[('pressed', '!disabled', 'Navy'), ('active', 'white')])
+
+        self.create_widgets()
+        self.initialize_environment()
+        
+
+    def create_widgets(self):
+        # Botones principales y área de log
+        ttk.Button(self, text="Cargar Datos", command=self.load_data).pack(pady=10)
+        ttk.Button(self, text="Procesar Datos", command=self.process_data).pack(pady=10)
+        self.log_area = tk.Text(self, height=10, state='disabled')
+        self.log_area.pack(fill=tk.BOTH, expand=True, pady=10)
+        
+
+    def initialize_environment(self):
+        # Configuración inicial de variables y entorno
+        self.start_time = time.time()
+        self.fecha_actual = datetime.now()
+        self.ruta_completa = os.path.join(os.getcwd(), 'data')
+        self.archivos = os.listdir(self.ruta_completa)
+        self.archivos_fijos = {
+            'consolidado enriquecimiento.xlsb',
+            'df_prod_hasta_2023.pkl',
+            'Primeras_Cuentas.xlsx',
+            'produccion 2024 salida.txt',
+            'Reporte_SIRAS.xlsx'
+        }
+        self.verify_files()
+        self.log("Entorno inicializado...")
+        
+
+    def verify_files(self):
+        missing_files = self.archivos_fijos - set(self.archivos)
+        if missing_files:
+            self.log(f"Faltan algunos archivos en el directorio: {', '.join(missing_files)}")
+        else:
+            self.log("Todos los archivos necesarios están en el directorio.")
+            
+
+    def load_data(self):
+        try:
+            self.log("Iniciando carga de datos...")
+            
+            # Aquí cargas todos los DataFrames
+            self.df_prod_hasta_2023 = pd.read_pickle(os.path.join(self.ruta_completa, 'df_prod_hasta_2023.pkl'))
+            self.df_producto_2024 = pd.read_table(os.path.join(self.ruta_completa, 'produccion 2024 salida.txt'), sep='♦')
+            self.df_prodconsolidado = pd.concat([self.df_prod_hasta_2023, self.df_producto_2024], ignore_index=True, sort=False)
+            self.df_primeras = pd.read_excel(os.path.join(self.ruta_completa, 'Primeras_Cuentas.xlsx'))
+            self.df_siras = pd.read_excel(os.path.join(self.ruta_completa, 'Reporte_SIRAS.xlsx'))
+            self.consolidado_enriquecido = pd.read_excel(os.path.join(self.ruta_completa,'consolidado enriquecimiento.xlsb'), engine='pyxlsb')
+            
+            self.log("Datos cargados correctamente...")
+        
+        except Exception as e:
+            self.log(f"Error al cargar datos: {e}")
+            
+    
+    def validar_correo(self, correo):
+        patron_correo = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+        if pd.isna(correo):
+            return False  # Considera los valores NaN como correos no válidos
+        return re.match(patron_correo, correo) is not None
+    
+
+    def validar_celular(self, celular):
+        patron_celular = r'^3\d{9}$'
+        if pd.isna(celular):
+            return False  # Considera los valores NaN como números no válidos
+        return re.match(patron_celular, celular) is not None
+     
+    
+    def process_data(self):
+        
+        
+        self.log("Iniciando procesamiento de datos...")
+        
+        # Simular un cambio de color permanente después del clic
+        self.style.configure('TButton', foreground='DarkCyan')
+        
+        
+        try: # Producto
+            # Proceso Producto
+            self.df_prodconsolidado = self.df_prodconsolidado[
+                    ['TIPO_DOC', 'NRO_DOC', 'TOMADOR', 'CELULAR', 'CORREO', 'POLIZA', 'PLACA']]
+            
+            self.df_prodconsolidado['POLIZA'] = pd.to_numeric(self.df_prodconsolidado['POLIZA'], errors='coerce')
+            self.df_prodconsolidado['POLIZA'] = self.df_prodconsolidado['POLIZA'].apply(lambda x: '{:.0f}'.format(x) if pd.notnull(x) else None)
+            self.df_prodconsolidado['POLIZA'] = self.df_prodconsolidado['POLIZA'].astype('object')
+            self.log("Datos Producto procesados correctamente.")
+            
+        except Exception as e:
+            self.log(f"Error durante el procesamiento de datos de Producto: {e}")
+            
+            
+               
+        try: # Primeras Cuentas
+            # Proceso Primeras Cuentas
+            columns_primeras_ctas = [
+                'Radicado IQ', 
+                'Numero Siniestro', 
+                'Numero Placa', 
+                'Ocurrencia Siniestro', 
+                'Documento Victima', 
+                'Victima', 
+                'Numero Formulario'
+            ]
+            self.df_primeras = self.df_primeras[columns_primeras_ctas]
+    
+            # Convertir fechas a formato correcto
+            try:
+                self.df_primeras["Ocurrencia Siniestro"] = pd.to_datetime(self.df_primeras["Ocurrencia Siniestro"], format="%Y/%m/%d")
+            except:
+                self.df_primeras["Ocurrencia Siniestro"] = pd.to_datetime(self.df_primeras["Ocurrencia Siniestro"], format="%d/%m/%Y")
+    
+            # Asegurar el tipo correcto de las columnas
+            self.df_primeras["Numero Formulario"] = self.df_primeras["Numero Formulario"].astype(str)
+            self.df_primeras["Documento Victima"] = self.df_primeras["Documento Victima"].astype(str)
+            self.df_primeras["DOC&PLACA"] = self.df_primeras["Documento Victima"] + self.df_primeras["Numero Placa"].astype(str)
+            self.df_primeras["DOC&FECHA"] = self.df_primeras["Documento Victima"] + self.df_primeras["Ocurrencia Siniestro"].astype(str)
+            self.df_primeras["DOC&FECHA&PLACA"] = self.df_primeras["Documento Victima"] + self.df_primeras["Ocurrencia Siniestro"].astype(str) + self.df_primeras["Numero Placa"].astype(str)
+    
+            # Eliminar duplicados y ordenar
+            self.df_primeras.drop_duplicates(inplace=True)
+            self.df_primeras.sort_values(by=['Numero Formulario'], inplace=True)
+    
+            self.log("Datos de Primeras Cuentas procesados correctamente.")
+        
+        except Exception as e:
+            self.log(f"Error durante el procesamiento de Primeras Cuentas: {e}")
+            
+        
+            
+        try: # Siras
+           
+            # Definir las columnas necesarias de df_siras
+            columnas_siras = [
+                'IDCRUCE', 'PLACA_VEHICULO', 'FECHA_EVENTO', 'TIPOIDENTIFICACION_VIC',
+                'IDENTIFICACION_VIC', 'PRIMER_APELLIDO_VIC'
+            ]
+    
+            # Filtrar df_siras para incluir solo las columnas necesarias
+            self.df_siras = self.df_siras[columnas_siras]
+    
+            # Convertir FECHA_EVENTO a formato datetime
+            self.df_siras["FECHA_EVENTO"] = pd.to_datetime(self.df_siras["FECHA_EVENTO"], errors='coerce')
+    
+            # Asegurar que las identificaciones y placas están en formato de texto
+            self.df_siras["IDENTIFICACION_VIC"] = self.df_siras["IDENTIFICACION_VIC"].astype(str)
+            self.df_siras["PLACA_VEHICULO"] = self.df_siras["PLACA_VEHICULO"].astype(str)
+    
+            # Crear llaves compuestas para posibles cruces
+            self.df_siras["DOC&PLACA&SIRAS"] = self.df_siras["IDENTIFICACION_VIC"] + self.df_siras["PLACA_VEHICULO"]
+            self.df_siras["DOC&FECHA"] = self.df_siras["IDENTIFICACION_VIC"] + self.df_siras["FECHA_EVENTO"].astype(str)
+            self.df_siras["DOC&FECHA&PLACA"] = self.df_siras["DOC&FECHA"] + self.df_siras["PLACA_VEHICULO"]
+    
+            # Ordenar por fecha del evento
+            self.df_siras.sort_values(by='FECHA_EVENTO', ascending=True, inplace=True)
+    
+            self.log("Datos de SIRAS procesados correctamente.")
+            
+            # Continuar con el procesamiento de otros DataFrames si es necesario
+            # ...
+
+        except Exception as e:
+            self.log(f"Error durante el procesamiento de datos de SIRAS: {e}")
+            
+            
+        
+        try: # consolidado enriquecido
+            
+            # Convertir la columna 'NUMERO IDENTIFICACION' a tipo string
+            self.consolidado_enriquecido['NUMERO IDENTIFICACION'] = self.consolidado_enriquecido['NUMERO IDENTIFICACION'].astype(str)
+    
+            self.log("Datos Consolidado Enriquecido procesados correctamente.")
+            
+        except Exception as e:
+            self.log(f"Error durante el procesamiento de datos consolidado enriquecido: {e}")
+        
+            
+        ##############  
+        ### Cruces ###
+        ##############
+        
+        try: 
+            try: # Cruce 1
+                # Cruce de 'df_primeras' con 'df_prodconsolidado' por 'Numero Formulario' y 'POLIZA'
+                self.df_result_1 = pd.merge(self.df_primeras, self.df_prodconsolidado, 
+                                            left_on='Numero Formulario', 
+                                            right_on='POLIZA', 
+                                            how='left')            
+               
+        
+                # Eliminación de duplicados en 'df_result_1' manteniendo la última entrada
+                self.df_result_1.drop_duplicates(subset='NRO_DOC', keep='last', inplace=True)
+                self.log("Cruce entre Primeras Cuentas y Producto completado correctamente.")
+                
+            except Exception as e:
+                self.log(f"Error durante el cruce 1: {e}")
+                
+                
+                
+            try: # Cruce 2
+    
+                # Cruce de df_siras con df_prodconsolidado por 'PLACA_VEHICULO'
+                df_result_2 = pd.merge(self.df_siras, self.df_prodconsolidado, 
+                                       left_on='PLACA_VEHICULO', 
+                                       right_on='PLACA',
+                                       how='left')
+        
+                # Eliminación de duplicados
+                df_result_2.drop_duplicates(subset='NRO_DOC', keep='last', inplace=True)
+                
+        
+                # Agrupación de datos por características del vehículo y evento
+                grouped_df_result_2 = df_result_2.groupby([
+                    'PLACA_VEHICULO', 'FECHA_EVENTO', 'TIPOIDENTIFICACION_VIC', 'IDENTIFICACION_VIC', 'PRIMER_APELLIDO_VIC'
+                ]).agg({
+                    'TIPO_DOC': 'last',
+                    'NRO_DOC': 'last',
+                    'TOMADOR': 'last',
+                    'CELULAR': 'last',
+                    'CORREO': 'last'
+                }).reset_index()
+                
+        
+                # Ordenamiento de datos por 'PLACA_VEHICULO' y 'CELULAR'
+                final_df_result_2 = grouped_df_result_2.sort_values(by=['PLACA_VEHICULO', 'CELULAR'])
+                
+        
+                # Agregar columnas con valores vacíos para 'Radicado IQ' y 'Numero Siniestro'
+                final_df_result_2['Radicado IQ'] = ""
+                final_df_result_2['Numero Siniestro'] = ""
+                
+        
+                # Ajustar el orden de las columnas para coincidir con la estructura deseada
+                final_siras = final_df_result_2[['Radicado IQ', 'Numero Siniestro'] + 
+                                                [col for col in final_df_result_2.columns if col not in ['Radicado IQ', 'Numero Siniestro']]]
+                
+        
+                # Asignar final_siras al atributo de clase para uso futuro o exportación
+                self.final_siras = final_siras
+                
+                self.log("Cruce entre SIRAS y Producto completado correctamente.")
+                
+            
+            except Exception as e:
+                self.log(f"Error durante el cruce 2: {e}")
+                
+                
+                
+            try: # Cruce 3
+            
+                # Cruce de df_primeras con df_siras basado en 'DOC&FECHA&PLACA'
+                df_cruce_1 = pd.merge(self.df_primeras, self.df_siras, on='DOC&FECHA&PLACA', how='left')
+        
+                # # Información del DataFrame resultante
+                # self.log(f"Info del DataFrame resultante del cruce:\n{df_cruce_1.info()}")
+        
+                # Cruce adicional para integrar con resultados previos de producto
+                df_final_primeras = pd.merge(self.df_result_1, df_cruce_1, left_on='DOC&FECHA', right_on='DOC&FECHA_x', how='left')
+                df_final_primeras.columns = [col.replace('_x', '') for col in df_final_primeras.columns]
+                df_final_primeras['td victima'] = ""
+        
+                # Agrupación y selección de la primera entrada relevante por grupo
+                grouped_df_primeras = df_final_primeras.groupby([
+                    'Radicado IQ', 'Numero Siniestro', 'Numero Placa', 'Ocurrencia Siniestro', 'td victima', 
+                    'Documento Victima', 'Victima'
+                ]).agg({
+                    'TIPO_DOC': 'first',
+                    'NRO_DOC': 'first',
+                    'TOMADOR': 'first',
+                    'CELULAR': 'first',
+                    'CORREO': 'first',
+                    'IDCRUCE': 'first'
+                }).reset_index()
+        
+                # Filtrar para mantener solo filas sin un IDCRUCE
+                filtered_df_primeras = grouped_df_primeras[pd.isna(grouped_df_primeras["IDCRUCE"])]
+                filtered_df_primeras.drop(columns=['IDCRUCE'], inplace=True)
+        
+                # Ordenar los resultados finales por 'Numero Placa' y 'CELULAR'
+                final_primeras = filtered_df_primeras.sort_values(by=['Numero Placa', 'CELULAR'])
+                
+                self.log("Cruce entre Primeras Cuentas y SIRAS completado correctamente.")
+        
+            
+            except Exception as e:
+                self.log(f"Error durante el cruce 3: {e}")
+                
+                
+                
+            try: # 4
+                # Aplicar validación de correo y celular en final_primeras
+                final_primeras['CORREO VALIDO'] = final_primeras['CORREO'].apply(self.validar_correo)
+                final_primeras['CELULAR VALIDO'] = final_primeras['CELULAR'].apply(self.validar_celular)
+                
+        
+                # Aplicar validación de correo y celular en final_siras
+                final_siras['CORREO VALIDO'] = final_siras['CORREO'].apply(self.validar_correo)
+                final_siras['CELULAR VALIDO'] = final_siras['CELULAR'].apply(self.validar_celular)
+                
+        
+                self.log("Validaciones de Correo y Celular correctamente.")
+                
+                
+            except Exception as e:
+                self.log(f"Error durante el cruce 4: {e}")
+                
+                
+            try: # 5
+
+                # Cruce de final_primeras con consolidado_enriquecido
+                df_cruce_3 = pd.merge(final_primeras, self.consolidado_enriquecido[
+                    ['NUMERO IDENTIFICACION', ' CELULAR 1', ' CORREO 1']
+                ], left_on="Documento Victima", right_on="NUMERO IDENTIFICACION", how='left')
+        
+                # Generación de 'CELULAR FINAL'
+                df_cruce_3['CELULAR FINAL'] = df_cruce_3.apply(
+                    lambda row: row[' CELULAR 1'] if row['CELULAR VALIDO'] and pd.notnull(row[' CELULAR 1']) else (row['CELULAR'] if row['CELULAR VALIDO'] else ''),
+                    axis=1
+                )
+        
+                # Generación de 'CORREO FINAL'
+                df_cruce_3['CORREO FINAL'] = df_cruce_3.apply(
+                    lambda row: row[' CORREO 1'] if pd.notnull(row[' CORREO 1']) else row['CORREO'],
+                    axis=1
+                )
+               
+        
+                # Creación de 'OBSERVACION FINAL'
+                df_cruce_3['OBSERVACION FINAL'] = [
+                    'Enviar IQ' if celular_final != '' and correo_final != '' else 'NO'
+                    for celular_final, correo_final in zip(df_cruce_3['CELULAR FINAL'], df_cruce_3['CORREO FINAL'])
+                ]
+                
+                self.log("Cruce entre Final Primeras Ctas y consolidado enriquecido completado correctamente.")
+                
+                
+            except Exception as e:
+                self.log(f"Error durante el cruce 5: {e}")
+                
+            
+            
+            try: #  6
+            
+                # Cruce de final_siras con consolidado_enriquecido
+                df_cruce_4 = pd.merge(final_siras, self.consolidado_enriquecido[
+                    ['NUMERO IDENTIFICACION', ' CELULAR 1', ' CORREO 1']
+                ], left_on="IDENTIFICACION_VIC", right_on="NUMERO IDENTIFICACION", how='left')
+                
+        
+                # Aplicar transformaciones para generar 'CELULAR FINAL' y 'CORREO FINAL'
+                df_cruce_4['CELULAR FINAL'] = df_cruce_4.apply(
+                    lambda row: row[' CELULAR 1'] if row['CELULAR VALIDO'] and pd.notnull(row[' CELULAR 1']) else (row['CELULAR'] if row['CELULAR VALIDO'] else ''),
+                    axis=1
+                )
+                df_cruce_4['CORREO FINAL'] = df_cruce_4.apply(
+                    lambda row: row[' CORREO 1'] if pd.notnull(row[' CORREO 1']) else row['CORREO'],
+                    axis=1
+                )
+               
+        
+                # Observaciones finales basadas en la validez de los datos de contacto
+                df_cruce_4['OBSERVACION FINAL'] = [
+                    'Enviar IQ' if celular_final != '' and correo_final != '' else 'NO'
+                    for celular_final, correo_final in zip(df_cruce_4['CELULAR FINAL'], df_cruce_4['CORREO FINAL'])
+                ]
+               
+        
+                # Asegurar que las columnas en df_cruce_4 sean las mismas que en df_cruce_3
+                df_cruce_4.columns = df_cruce_3.columns 
+        
+                # Combinar df_cruce_3 y df_cruce_4 en un DataFrame final
+                df_resultado_final = pd.concat([df_cruce_3, df_cruce_4], ignore_index=True)
+                df_resultado_final.drop_duplicates()  # Eliminar duplicados si existen
+
+        
+                self.log("Cruce entre Final SIRAS y consolidado enriquecido completado correctamente.")
+                
+                
+            except Exception as e:
+                self.log(f"Error durante el cruce 6: {e}")
+                
+            
+            try: # 7
+                # Asegurar que todas las columnas deseadas estén presentes en df_resultado_final
+                columnas_resultado = [
+                    "Radicado IQ", "Numero Siniestro", "Numero Placa", "Ocurrencia Siniestro",
+                    "Documento Victima", "Victima", "TIPO_DOC", "NRO_DOC", "TOMADOR",
+                    "CELULAR", "CORREO", "CELULAR VALIDO", "CORREO VALIDO", " CELULAR 1",
+                    " CORREO 1", "CELULAR FINAL", "CORREO FINAL", "OBSERVACION FINAL"
+                ]
+                
+                # Aplicar las columnas seleccionadas al DataFrame
+                df_resultado_final = df_resultado_final[columnas_resultado]
+                
+        
+                # Filtrar para obtener solo las filas donde 'OBSERVACION FINAL' es 'Enviar IQ'
+                df_enviar_IQ = df_resultado_final[df_resultado_final['OBSERVACION FINAL'] == 'Enviar IQ']
+                
+        
+                # Seleccionar solo las columnas deseadas para el envío
+                columnas_envioIQ = [
+                    "Documento Victima", "Victima", "Radicado IQ", "Numero Placa", "Ocurrencia Siniestro", 
+                    "NRO_DOC", "TOMADOR", "CELULAR FINAL", "CORREO FINAL"
+                ]
+                df_enviar_IQ = df_enviar_IQ[columnas_envioIQ]
+                
+        
+                # Opciones adicionales como guardar el DataFrame o más procesamiento
+                # df_enviar_IQ.to_csv("Datos_para_enviar_IQ.csv", index=False)
+                # self.log("Datos exportados a 'Datos_para_enviar_IQ.csv'.")
+                
+                self.log("Cruce Final completado correctamente.")
+        
+            except Exception as e:
+                self.log(f"Error cruce final 7: {e}")
+            
+                        
+                        
+            # Log Final Procesamiento Datos
+            self.log("El procesamiento de los datos ha sido completado correctamente...")
+            
+            
+            
+        
+        except Exception as e:
+            self.log(f"Error durante el procesamiento de los datos: {e}")
+            
+            
+            
+            
+        try:
+            file_path = 'Resultado_SMS.xlsx'
+            with pd.ExcelWriter(file_path) as writer:
+                # Guardar df_resultado_final en una hoja
+                df_resultado_final.to_excel(writer, sheet_name='Resultado Final', index=False)
+                
+                # Guardar df_enviar_IQ en otra hoja
+                df_enviar_IQ.to_excel(writer, sheet_name='Enviar IQ', index=False)
+            
+            self.log(f"Datos guardados correctamente en {file_path}.")
+            
+            self.end_timer()
+            
+        except Exception as e:
+            self.log(f"Error al guardar los datos: {e}")
+            self.end_timer()
+              
+        # try: # Exportar
+          
+        #     # Asegurarse que los DataFrames están definidos y no están vacíos
+        #     if hasattr(self, 'df_resultado_final') and not self.df_resultado_final.empty:
+        #         if hasattr(self, 'df_enviar_IQ') and not self.df_enviar_IQ.empty:
+        #             # Obtiene la fecha actual para el nombre del archivo
+        #             file_path = f'Resultado_SMS_{self.nombre_mes}.xlsx'
+    
+        #             # Guardar los DataFrames en un archivo Excel
+        #             with pd.ExcelWriter(file_path, engine='openpyxl') as writer:
+        #                 self.df_resultado_final.to_excel(writer, sheet_name='Resultado Final', index=False)
+        #                 self.df_enviar_IQ.to_excel(writer, sheet_name='Enviar IQ', index=False)
+                    
+        #             self.log(f"Datos exportados correctamente en {file_path}")
+        #         else:
+        #             self.log("No hay datos válidos en df_enviar_IQ para exportar.")
+        #     else:
+        #         self.log("No hay datos válidos en df_resultado_final para exportar.")
+                
+        # except Exception as e:
+        #     self.log(f"Error durante el procesamiento y exportación de datos: {e}")
+            
+    def end_timer(self):
+        end_time = time.time()
+        elapsed_time = end_time - self.start_time  # Tiempo transcurrido en segundos
+    
+        # Convertir segundos a minutos si es menos de una hora, a horas si es más
+        if elapsed_time < 3600:
+            time_in_minutes = elapsed_time / 60
+            time_formatted = f"{time_in_minutes:.2f} minutos"
+        else:
+            time_in_hours = elapsed_time / 3600
+            time_formatted = f"{time_in_hours:.2f} horas"
+    
+        self.log(f"Tiempo total de ejecución: {time_formatted}.")
+            
+                   
+    def log(self, message):
+        
+            # Función para registrar mensajes en el área de log
+            self.log_area.configure(state='normal')
+            self.log_area.insert(tk.END, message + "\n")
+            self.log_area.configure(state='disabled')
+
+# Ejecutar la aplicación
+if __name__ == "__main__":
+    app = SMSApp()
+    app.mainloop()            
